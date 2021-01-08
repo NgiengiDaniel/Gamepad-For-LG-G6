@@ -9,7 +9,6 @@
 #include <util/delay.h>     /* for _delay_ms() */
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
 
 #include <avr/pgmspace.h>   /* required by usbdrv.h */
 #include "usbdrv/usbdrv.h"
@@ -24,35 +23,52 @@ int8_t mapTo8Bit( int16_t val );
 /* ----------------------------- USB interface ----------------------------- */
 /* ------------------------------------------------------------------------- */
 
-// X/Y joystick w/ 16-bit readings (-127 to +127), 16 buttons
-PROGMEM const char usbHidReportDescriptor [42] =
-{
+// (X/Y) and (Rx/Ry) Gamepad w/ 8-bit readings (-127 to +127), 16 buttons
+
+PROGMEM const char usbHidReportDescriptor [62] =
+{ //Specifies to the host what type of device this is, and how many bytes will it send.
 		0x05, 0x01,     // USAGE_PAGE (Generic Desktop)
 		0x09, 0x05,     // USAGE (Game Pad)
 		0xa1, 0x01,     // COLLECTION (Application)
-		0x09, 0x01,     //   USAGE (Pointer)
+
 		0xa1, 0x00,     //   COLLECTION (Physical)
+
+		0x05, 0x01,     //	   USAGE_PAGE (Generic Desktop)
 		0x09, 0x30,     //     USAGE (X)
 		0x09, 0x31,     //     USAGE (Y)
-		0x15, 0x81,     //   LOGICAL_MINIMUM (-127)
-		0x25, 0x7f,     //   LOGICAL_MAXIMUM (127)
-		0x75, 0x10,     //   REPORT_SIZE (16)
-		0x95, 0x02,     //   REPORT_COUNT (2)
-		0x81, 0x02,     //   INPUT (Data,Var,Abs)
+		0x09, 0x33,			//     USAGE (Rx)
+		0x09, 0x34,			//     USAGE (Ry)
+		0x15, 0x81,     //     LOGICAL_MINIMUM (-127)
+		0x25, 0x7f,     //     LOGICAL_MAXIMUM (127)
+		0x75, 0x08,     //     REPORT_SIZE (8)
+		0x95, 0x04,     //     REPORT_COUNT (4)
+		0x81, 0x02,     //     INPUT (Data,Var,Abs)
+
+		0x05, 0x09,     // 	   USAGE_PAGE (Button)
+		0x19, 0x01,     //     USAGE_MINIMUM (Button 1)
+		0x29, 0x08,     //     USAGE_MAXIMUM (Button 8)
+		0x15, 0x00,     //     LOGICAL_MINIMUM (0)
+		0x25, 0x01,     //     LOGICAL_MAXIMUM (1)
+		0x75, 0x01,     //     REPORT_SIZE (1)
+		0x95, 0x08,     //     REPORT_COUNT (8)
+		0x81, 0x02,     //     INPUT (Data,Var,Abs)
+
+		0x05, 0x09,     // 	   USAGE_PAGE (Button)
+		0x19, 0x01,     //     USAGE_MINIMUM (Button 1)
+		0x29, 0x08,     //     USAGE_MAXIMUM (Button 8)
+		0x15, 0x00,     //     LOGICAL_MINIMUM (0)
+		0x25, 0x01,     //     LOGICAL_MAXIMUM (1)
+		0x75, 0x01,     //     REPORT_SIZE (1)
+		0x95, 0x08,     //     REPORT_COUNT (8)
+		0x81, 0x02,     //     INPUT (Data,Var,Abs)
+
+		0xc0,           // 	 END_COLLECTION
 		0xc0,           // END_COLLECTION
-		0x05, 0x09,     // USAGE_PAGE (Button)
-		0x19, 0x01,     //   USAGE_MINIMUM (Button 1)
-		0x29, 0x10,     //   USAGE_MAXIMUM (Button 16)
-		0x15, 0x00,     //   LOGICAL_MINIMUM (0)
-		0x25, 0x01,     //   LOGICAL_MAXIMUM (1)
-		0x75, 0x01,     // REPORT_SIZE (1)
-		0x95, 0x10,     // REPORT_COUNT (16)
-		0x81, 0x02,     // INPUT (Data,Var,Abs)
-		0xc0            // END_COLLECTION
+
 };
 
-uint16_t reportCurr[3];
-uint16_t reportLast[3];
+uint8_t reportCurr[6];
+uint8_t reportLast[6];
 uint8_t    idleRate;
 
 /* ------------------------------------------------------------------------- */
@@ -70,13 +86,13 @@ int main(void)
     	usbPoll();
         if(usbInterruptIsReady())
         {
-			/* called after every poll of the interrupt endpoint */
-			read_joy();
-			if ( memcmp( reportLast, reportCurr, sizeof reportCurr ) )
-			{
-				memcpy( reportLast, reportCurr, sizeof reportCurr );
-				usbSetInterrupt( reportLast, sizeof reportLast );
-			}
+						/* called after every poll of the interrupt endpoint */
+						read_joy();
+						if ( memcmp( reportLast, reportCurr, sizeof reportCurr ) )
+						{
+								memcpy( reportLast, reportCurr, sizeof reportCurr );
+								usbSetInterrupt( reportLast, sizeof reportLast );
+						}
         }
     }
 }
@@ -84,14 +100,14 @@ int main(void)
 
 void hardwareInit(void)
 {
- DDRB	= 	0b00000000;
- PORTB	=	0b00011111;
+ DDRB	= 	0b00000000;				//Set PORTB as inputs
+ PORTB	=	0b00011111;				//INPUT_PULLUP on B0, B1, B2, B3 and B4
 
- DDRD	= 	0b00000000;
- PORTD	=	0b11110011;
+ DDRD	= 	0b00000000;				//Set PORTD as inputs
+ PORTD	=	0b11110011;				//INPUT_PULLUP on D0, D1, D4, D5, D6 and D7
 
- DDRC 	= 	0b00000000;
- PORTC	= 	0b00011100;
+ DDRC 	= 	0b00000000;			//Set PORTC as inputs
+ PORTC	= 	0b00011100;			//INPUT_PULLUP on D2, D3 and D4
 
  intitADC();
 }
@@ -119,36 +135,45 @@ int16_t readADC(uint8_t ADCchannel)
 /* ------------------------------------------------------------------------- */
 
 int8_t mapTo8Bit( int16_t val )
-{
+{					/*Note: The ATMega328p has 10 bits ADC precision.*/
+					/*This needs to be scalled down to 8 bits (8 bit MCU)*/
 	return (( val )*( 254L ))/( 1023 )  - 127 ;
 }
 /* ------------------------------------------------------------------------- */
 
 void read_joy( void )
-{
+{	//Sending 0 when no event is registered.
 	reportCurr [0] = 0;
 	reportCurr [1] = 0;
 	reportCurr [2] = 0;
+	reportCurr [3] = 0;
+	reportCurr [4] = 0;
+	reportCurr [5] = 0;
+
 
 	// X AXIS
-	reportCurr [0] = -mapTo8Bit( readADC( 1 ) );		//	The negative sign is for correcting the way the hardware (analog joystick) is wired. Left and right are flipped.
-	// Y AXIS
-	reportCurr [1] = -mapTo8Bit( readADC( 0 ) );		//	The negative sign is for correcting the way the hardware (analog joystick) is wired. Up and down are flipped.
+	reportCurr [0] = -mapTo8Bit( readADC( 1 ) ); 	/*	The negative sign is for correcting 	*/
+	// Y AXIS									 	/*	the way the hardware (analog joystick) 	*/
+	reportCurr [1] = -mapTo8Bit( readADC( 0 ) ); 	/*	is wired. Left and right are flipped.	*/
+	// Rx AXIS (RIGHT ANALOG X AXIS)			 	/*	Up and down are flipped.				*/
+	reportCurr [2] = mapTo8Bit( readADC( 7 ) ); 	//ANALOG ONLY PIN A7
+	// Ry AXIS (RIGHT ANALOG Y AXIS)
+	reportCurr [3] = -mapTo8Bit( readADC( 6 ) );	//ANALOG ONLY PIN A6
 
 
 	// Buttons
-	if ( !( PIND & 0x10 ) ) reportCurr[2] |= 0x01;		    //PRESSED  A
-	if ( !( PIND & 0x20 ) ) reportCurr[2] |= 0x02;		    //PRESSED  B
-	if ( !( PIND & 0x40 ) ) reportCurr[2] |= 0x04;		    //PRESSED  X
-	if ( !( PIND & 0x80 ) ) reportCurr[2] |= 0x08;		    //PRESSED  Y
-	if ( !( PINB & 0x01 ) ) reportCurr[2] |= 0x10;		    //PRESSED  LB
-	if ( !( PINB & 0x02 ) ) reportCurr[2] |= 0x20;		    //PRESSED  RB
-	if ( !( PINB & 0x04 ) ) reportCurr[2] |= 0x1000;	    //PRESSED  UP
-	if ( !( PINB & 0x08 ) ) reportCurr[2] |= 0x2000;		//PRESSED  DOWN
-	if ( !( PINB & 0x10 ) ) reportCurr[2] |= 0x4000;		//PRESSED  LEFT
-	if ( !( PINC & 0x04 ) ) reportCurr[2] |= 0x8000;		//PRESSED  RIGHT
-	if ( !( PINC & 0x08 ) ) reportCurr[2] |= 0x100;			//PRESSED  BACK / SELECT
-	if ( !( PINC & 0x10 ) ) reportCurr[2] |= 0x200;			//PRESSED  START
+	if ( !( PIND & 0x10 ) ) reportCurr[4] |= 0x01;		    //PRESSED  A     -> DIGITAL PIN 4
+	if ( !( PIND & 0x20 ) ) reportCurr[4] |= 0x02;		    //PRESSED  B     -> DIGITAL PIN 5
+	if ( !( PIND & 0x40 ) ) reportCurr[4] |= 0x04;		    //PRESSED  X     -> DIGITAL PIN 6
+	if ( !( PIND & 0x80 ) ) reportCurr[4] |= 0x08;		    //PRESSED  Y     -> DIGITAL PIN 7
+	if ( !( PINB & 0x01 ) ) reportCurr[4] |= 0x10;		    //PRESSED  LB 	 ->	DIGITAL PIN 8
+	if ( !( PINB & 0x02 ) ) reportCurr[4] |= 0x20;		    //PRESSED  RB 	 ->	DIGITAL PIN 9
+	if ( !( PINB & 0x04 ) ) reportCurr[4] |= 0x40;	   		//PRESSED  UP 	 ->	DIGITAL PIN 10
+	if ( !( PINB & 0x08 ) ) reportCurr[4] |= 0x80;				//PRESSED  DOWN  ->	DIGITAL PIN 11
+	if ( !( PINB & 0x10 ) ) reportCurr[5] |= 0x01;				//PRESSED  LEFT  ->	DIGITAL PIN 12
+	if ( !( PINC & 0x04 ) ) reportCurr[5] |= 0x02;				//PRESSED  RIGHT ->	ANALOG PIN A2
+	if ( !( PINC & 0x08 ) ) reportCurr[5] |= 0x04;				//PRESSED  LT		 ->	ANALOG PIN A3
+	if ( !( PINC & 0x10 ) ) reportCurr[5] |= 0x08;				//PRESSED  RT	 	 ->	ANALOG PIN A4
 }
 /* ------------------------------------------------------------------------- */
 
